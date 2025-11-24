@@ -2,6 +2,9 @@
 from __future__ import absolute_import
 import time
 import socket
+import sys
+import os
+import logging
 
 import octoprint.plugin
 import octoprint.util
@@ -25,16 +28,34 @@ class DetailedProgress(octoprint.plugin.EventHandlerPlugin,
 	_M73_R = False
 	
 	def on_event(self, event, payload):
-		if event == Events.PRINT_STARTED:
-			self._logger.info("Printing started. Detailed progress started.")
-			self._etl_format = self._settings.get(["etl_format"])
-			self._eta_strftime = self._settings.get(["eta_strftime"])
-			self._all_messages = self._settings.get(["all_messages"])
-			self._messages = self._settings.get(["messages"])
-			self._M73 = self._settings.get(["use_M73"])
-			self._M73_R = self._settings.get(["use_M73_R"])
-			self._repeat_timer = octoprint.util.RepeatedTimer(self._settings.get_int(["time_to_change"]), self.do_work)
-			self._repeat_timer.start()
+		try:
+			if event == Events.PRINT_STARTED:
+				self._logger.info("Printing started. Detailed progress started.")
+				
+				# Verificar se as configurações estão disponíveis
+				if self._settings is None:
+					self._logger.error("Settings not available")
+					return
+				
+				self._etl_format = self._settings.get(["etl_format"])
+				self._eta_strftime = self._settings.get(["eta_strftime"])
+				self._all_messages = self._settings.get(["all_messages"])
+				self._messages = self._settings.get(["messages"])
+				self._M73 = self._settings.get(["use_M73"])
+				self._M73_R = self._settings.get(["use_M73_R"])
+				
+				# Verificar se o printer está disponível
+				if self._printer is None:
+					self._logger.error("Printer interface not available")
+					return
+				
+				time_to_change = self._settings.get_int(["time_to_change"])
+				if time_to_change is None or time_to_change <= 0:
+					time_to_change = 10
+					self._logger.warning("Invalid time_to_change setting, using default: 10")
+				
+				self._repeat_timer = octoprint.util.RepeatedTimer(time_to_change, self.do_work)
+				self._repeat_timer.start()
 		elif event in (Events.PRINT_DONE, Events.PRINT_FAILED, Events.PRINT_CANCELLED):
 			if self._repeat_timer is not None:
 				self._repeat_timer.cancel()
@@ -59,17 +80,38 @@ class DetailedProgress(octoprint.plugin.EventHandlerPlugin,
 			self._repeat_timer.start()
 			self._logger.info("Printing resumed. Detailed progress unpaused.")
 			
-		elif event.startswith('DisplayLayerProgress'):			
-			self._layerIs = "{0}/{1}".format(payload['currentLayer'], payload['totalLayer'])
-			self._heightIs = "{0}/{1}".format(payload['currentHeightFormatted'], payload['totalHeightFormatted'])
-			self._changeFilamentSeconds = payload['changeFilamentTimeLeftInSeconds']
-			
-	def do_work(self):
-		if not self._printer.is_printing():
-			# we have nothing to do here
-			return
+			elif event.startswith('DisplayLayerProgress'):			
+				self._layerIs = "{0}/{1}".format(payload['currentLayer'], payload['totalLayer'])
+				self._heightIs = "{0}/{1}".format(payload['currentHeightFormatted'], payload['totalHeightFormatted'])
+				self._changeFilamentSeconds = payload['changeFilamentTimeLeftInSeconds']
+				
+		except Exception as e:
+			self._logger.error("Error in on_event: {}".format(str(e)))
+			self._logger.error("Event: {}, Payload: {}".format(event, payload))
+			self._logger.error("Traceback: {}".format(traceback.format_exc()))	def do_work(self):
 		try:
+			# Verificações de segurança
+			if self._printer is None:
+				self._logger.warning("Printer interface not available in do_work")
+				return
+			
+			if not self._printer.is_printing():
+				# we have nothing to do here
+				return
+			
+			# Verificar se as mensagens estão disponíveis
+			if not hasattr(self, '_messages') or not self._messages:
+				self._logger.warning("Messages not available, reloading settings")
+				self._messages = self._settings.get(["messages"])
+				if not self._messages:
+					self._logger.error("Unable to load messages from settings")
+					return
+			
 			currentData = self._printer.get_current_data()
+			if currentData is None:
+				self._logger.warning("No current data available from printer")
+				return
+				
 			currentData = self._sanitize_current_data(currentData)
 
 			message = self._get_next_message(currentData)
@@ -80,7 +122,7 @@ class DetailedProgress(octoprint.plugin.EventHandlerPlugin,
 				self._update_progress(currentData)
 
 		except Exception as e:
-			self._logger.info("Caught an exception {0}\nTraceback:{1}".format(e, traceback.format_exc()))
+			self._logger.error("Caught an exception in do_work: {0}\nTraceback:{1}".format(e, traceback.format_exc()))
 
 	def _update_progress(self, currentData):
 		progressPerc = int(currentData["progress"]["completion"])
@@ -184,6 +226,27 @@ class DetailedProgress(octoprint.plugin.EventHandlerPlugin,
 	##~~ StartupPlugin
 	def on_after_startup(self):
 		self._logger.info("OctoPrint-DetailedProgress loaded!")
+		try:
+			# Verificação de compatibilidade com ambiente virtual
+			if hasattr(sys, 'prefix') and hasattr(sys, 'base_prefix'):
+				if sys.prefix != sys.base_prefix:
+					self._logger.info("Running in virtual environment: {}".format(sys.prefix))
+			
+			# Verificação de permissões e funcionalidades
+			if self._printer is None:
+				self._logger.warning("Printer interface not available yet")
+				return
+			
+			# Testar acesso às configurações
+			test_setting = self._settings.get(["time_to_change"])
+			if test_setting is None:
+				self._logger.warning("Settings not properly initialized")
+			
+			self._logger.info("Plugin initialization completed successfully")
+			
+		except Exception as e:
+			self._logger.error("Error during plugin startup: {}".format(str(e)))
+			self._logger.error("Traceback: {}".format(traceback.format_exc()))
 
 	##-- AssetPlugin
 	def get_assets(self):
@@ -223,25 +286,24 @@ class DetailedProgress(octoprint.plugin.EventHandlerPlugin,
 
 	##~~ Softwareupdate hook
 	def get_update_information(self):
-		return dict(
-			detailedprogress=dict(
-				displayName="DetailedProgress Plugin",
-				displayVersion=self._plugin_version,
+			return dict(
+				detailedprogress=dict(
+					displayName="DetailedProgress Plugin - CB1 Enhanced",
+					displayVersion=self._plugin_version,
 
-				# version check: github repository
-				type="github_release",
-				user="tpmullan",
-				repo="OctoPrint-DetailedProgress",
-				current=self._plugin_version,
+					# version check: github repository
+					type="github_release",
+					user="edilsoncorrea",
+					repo="OctoPrint-DetailedProgress",
+					current=self._plugin_version,
 
-				# update method: pip
-				pip="https://github.com/tpmullan/OctoPrint-DetailedProgress/archive/{target_version}.zip"
+					# update method: pip
+					pip="https://github.com/edilsoncorrea/OctoPrint-DetailedProgress/archive/{target_version}.zip"
+				)
 			)
-		)
-
-
 __plugin_name__ = "Detailed Progress"
-__plugin_pythoncompat__ = ">=2.7,<4"
+__plugin_pythoncompat__ = ">=3.7,<4"
+__plugin_version__ = "0.2.8"
 
 
 def __plugin_load__():

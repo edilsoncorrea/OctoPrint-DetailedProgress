@@ -14,20 +14,20 @@ plugin_package = "octoprint_detailedprogress"
 plugin_name = "OctoPrint-DetailedProgress"
 
 # The plugin's version. Can be overwritten within OctoPrint's internal data via __plugin_version__ in the plugin module
-plugin_version = "0.2.7"
+plugin_version = "0.2.8"
 
 # The plugin's description. Can be overwritten within OctoPrint's internal data via __plugin_description__ in the plugin
 # module
-plugin_description = """Displays detailed progress on the LCD screen"""
+plugin_description = """Displays detailed progress on the LCD screen - Enhanced CB1 compatibility"""
 
 # The plugin's author. Can be overwritten within OctoPrint's internal data via __plugin_author__ in the plugin module
-plugin_author = "Tom M"
+plugin_author = "Edilson Correa (Fork com melhorias CB1)"
 
 # The plugin's author's mail address.
-plugin_author_email = "tpmullan@gmail.com"
+plugin_author_email = "edilsoncorrea117@gmail.com"
 
 # The plugin's homepage URL. Can be overwritten within OctoPrint's internal data via __plugin_url__ in the plugin module
-plugin_url = "https://github.com/tpmullan/OctoPrint-DetailedProgress"
+plugin_url = "https://github.com/edilsoncorrea/OctoPrint-DetailedProgress"
 
 # The plugin's license. Can be overwritten within OctoPrint's internal data via __plugin_license__ in the plugin module
 plugin_license = "AGPLv3"
@@ -62,6 +62,37 @@ additional_setup_parameters = {}
 ########################################################################################################################
 
 from setuptools import setup
+import sys
+import os
+
+# Verificações de compatibilidade para CB1/venv
+def check_environment():
+	print("Verificando ambiente de instalação...")
+	
+	# Verificar versão do Python
+	if sys.version_info < (3, 7):
+		print("AVISO: Este plugin requer Python 3.7 ou superior")
+		print(f"Versão atual: {sys.version}")
+	
+	# Verificar se está em venv
+	if hasattr(sys, 'prefix') and hasattr(sys, 'base_prefix'):
+		if sys.prefix != sys.base_prefix:
+			print(f"✓ Ambiente virtual detectado: {sys.prefix}")
+		else:
+			print("AVISO: Não executando em ambiente virtual")
+	
+	# Verificar se o OctoPrint está disponível
+	try:
+		import octoprint
+		print(f"✓ OctoPrint encontrado: {getattr(octoprint, '__version__', 'versão desconhecida')}")
+	except ImportError:
+		print("ERRO: OctoPrint não encontrado!")
+		print("Certifique-se de que:")
+		print("1. O ambiente virtual do OctoPrint está ativado")
+		print("2. OctoPrint está instalado neste ambiente")
+		return False
+	
+	return True
 
 try:
 	import octoprint_setuptools
@@ -70,6 +101,13 @@ except:
 	      "the same python installation that OctoPrint is installed under?")
 	import sys
 	sys.exit(-1)
+
+# Executar verificações apenas se não estivermos em modo de desenvolvimento
+if not os.environ.get('SKIP_CHECKS'):
+	if not check_environment():
+		print("\nPara pular essas verificações, execute:")
+		print("SKIP_CHECKS=1 pip install .")
+		sys.exit(-1)
 
 setup_parameters = octoprint_setuptools.create_plugin_setup_parameters(
 	identifier=plugin_identifier,

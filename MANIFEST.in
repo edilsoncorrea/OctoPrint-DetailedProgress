@@ -1,1 +1,11 @@
 include README.md
+include requirements.txt
+include FORK_INFO.md
+include INSTALACAO_CB1.md
+include RESUMO_MELHORIAS.md
+include diagnostic_tool.py
+include install_cb1.sh
+include check_status.sh
+recursive-include octoprint_detailedprogress/static *
+recursive-include octoprint_detailedprogress/templates *
+recursive-include octoprint_detailedprogress *.py
